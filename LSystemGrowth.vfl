@@ -1,0 +1,210 @@
+// -- FUNCS
+void drop_point(matrix3 orient; vector root_pos; int length; int root_pt; int constraint_type; float step_length)
+{
+    //int pt = addpoint(0, pos);
+    vector i = normalize(set(orient.xx, orient.xy, orient.xz));
+    vector j = normalize(set(orient.yx, orient.yy, orient.yz));
+    vector k = normalize(set(orient.zx, orient.zy, orient.zz));
+    
+    vector pos = root_pos + (normalize(k)*step_length);
+
+    if (constraint_type == 2) {
+        float samp = volumesample(1, 0, pos);
+        vector grad = normalize(volumegradient(1, 0, pos));
+        if (samp <= 0.01) {
+            pos += (-grad * samp * 1.1);
+        } 
+       else {
+            pos -= (grad * samp * 0.15);
+        }
+    }
+
+    int pt = addpoint(0, pos);
+    
+    setpointattrib(0, "I", pt, i, "set");
+    setpointattrib(0, "J", pt, j, "set");
+    setpointattrib(0, "K", pt, k, "set");
+    setpointattrib(0, "DELAY", pt, length, "set");
+    setpointattrib(0, "pscale", pt, 0.0001, "set");
+    setpointgroup(0, "active", pt, 1, "set");
+
+    int prim = addprim(0, "polyline", root_pt, pt);
+    addvertex(0, prim, root_pt);
+    addvertex(0, prim, pt);
+}
+
+void branch(matrix3 orient; string direction; float angle; vector axis1; vector root_pos; int length; int root_pt; int constraint_type; float step_length)
+{
+    if (direction == "left") {
+        rotate(orient, angle, axis1);
+        drop_point(orient, root_pos, length, root_pt, constraint_type, step_length);
+        rotate(orient, -angle, axis1);
+    }
+    else if (direction == "right") {
+        rotate(orient, -angle, axis1);
+        drop_point(orient, root_pos, length, root_pt, constraint_type, step_length);
+        rotate(orient, angle, axis1);
+    }
+}
+
+void branch3(matrix3 orient; string direction; float angle; vector axis1; vector axis2; vector root_pos; int length; int root_pt; int constraint_type; float step_length)
+{
+    if (direction == "left") {
+        rotate(orient, angle, axis1);
+        rotate(orient, angle, axis2);
+        drop_point(orient, root_pos, length, root_pt, constraint_type, step_length);
+        rotate(orient, -angle*2, axis2);
+        drop_point(orient, root_pos, length, root_pt, constraint_type, step_length);
+        rotate(orient, angle, axis2);
+        rotate(orient, -angle, axis1);
+    }
+    else if (direction == "right") {
+        rotate(orient, -angle, axis1);
+        rotate(orient, -angle, axis2);
+        drop_point(orient, root_pos, length, root_pt, constraint_type, step_length);
+        rotate(orient, angle*2, axis2);
+        drop_point(orient, root_pos, length, root_pt, constraint_type, step_length);
+        rotate(orient, -angle, axis2);
+        rotate(orient, angle, axis1);
+    }
+}
+
+// -- VARS
+int seed = chi("../../../../Random_Seed");
+// random seeds
+vector seed1 = @P * (float)seed * 1;
+vector seed2 = @P + (float)seed * 1;
+vector seed3 = @P * (float)seed * 0.5;
+vector seed4 = @P + (float)seed * 5;
+vector seed5 = @P * (float)seed * 0.333;
+
+// user vars
+// growth parameters
+float step_length = ch("../../../../Step_Length");
+float neighbour_threshold = ch("../../../../Neighbour_Threshold");
+int length = chi("../../../../Branch_Length");
+int r_length = chi('../../../../Branch_Length_Random');
+float angle = radians(ch("../../../../Branch_Angle"));
+float r_angle = radians(ch("../../../../Branch_Angle_Random"));
+float r_dir = radians(ch("../../../../Growth_Wandering"));
+float c_branch = ch("../../../../Branch_Chance")/100;
+int branch_type = chi("../../../../_3D_Branching");
+int wander_type = chi("../../../../_3D_Wandering");
+int constraint_type = chi("../../../../Constraint_Type");
+
+// user vars
+/*
+float neighbour_threshold = 0.7; // neighbour search distance
+int length = 1; // base length
+int r_length = 0; // random length 
+float angle = radians(60); // base angle
+float r_angle = radians(0); // random angle
+float r_dir = radians(10); // straight line growth wander
+float c_branch = 5.0 / 100.0; // branch creation %
+*/
+
+// -- computed vars
+// settings conflict overrides
+if (constraint_type == 1) {
+    wander_type = 0;
+    branch_type = 0;
+}
+// construct orient matrix
+matrix3 orient = set(v@I, v@J, v@K);
+// branch length randomness
+r_length = int(fit(random(seed1), 0, 1, -r_length, r_length));
+length += r_length;
+// branch angle randomness
+r_angle = fit(random(seed2), 0, 1, -r_angle, r_angle);
+angle += r_angle;
+
+// directional "wandering"
+if (r_dir > 0.0) {
+    r_dir = fit(random(seed3), 0, 1, -r_dir, r_dir);
+    rotate(orient, r_dir, v@J);
+    if (wander_type == 1) {
+        r_dir = fit(random(seed4), 0, 1, -r_dir, r_dir);
+        rotate(orient, r_dir, v@I);
+        r_dir = fit(random(seed5), 0, 1, -r_dir, r_dir);
+        rotate(orient, r_dir, v@K);
+    }
+    // reset basis vectors after wandering
+    v@I = set(orient.xx, orient.xy, orient.xz);
+    v@J = set(orient.yx, orient.yy, orient.yz);
+    v@K = set(orient.zx, orient.zy, orient.zz);
+}
+
+// --- MAIN
+@group_active = 0;
+@group_inactive = 1;
+
+// stop growing if neighbors are within threshold
+int neighbours[] = nearpoints(0, @P, neighbour_threshold);
+if (len(neighbours) > 2) {
+    setpointgroup(0, "inactive", @ptnum, 1, "set");
+    setpointgroup(0, "active", @ptnum, 0, "set");
+    setpointgroup(0, "leaf", @ptnum, 1, "set");
+    3@transform = orient;
+    return;
+}
+
+/*
+// Volume (SDF) constrained growth
+if (constraint_type == 2) {
+    // modify orient to account for (optional) SDF boundary
+    float sdf_dist_check = 5.0;
+    @sdf_samp = volumesample(1, "surface", @P);
+    v@sdf_grad = normalize(volumegradient(1, "surface", @P));
+    vector sdf_N = volumesamplev(1, "N", @P);
+
+    // OPTION 1 -- "BOUNCE OFF" INTERIOR SURFACE
+    /*if (sdf_samp > -sdf_dist_check){
+        float s = fit(@sdf_samp, -sdf_dist_check, 0, 0.0, 0.5);
+        vector j = set(orient.yx, orient.yy, orient.yz);
+        vector k = set(orient.zx, orient.zy, orient.zz);
+        vector k_ = k - (sdf_grad * s);
+
+        vector i = cross(k_, j);
+        j = cross(i, k_);
+
+        orient = set(i,j,k_);
+    }*/
+    
+
+/*    
+    // OPTION 2 -- "STICK TO" INTERIOR SURFACE
+    if (@sdf_samp <= 0.1) {
+       vector i = set(orient.xx, orient.xy, orient.xz);
+       //vector j = set(orient.yx, orient.yy, orient.yz);
+       //vector k = set(orient.zx, orient.zy, orient.zz);
+       vector j = sdf_N;
+       vector k = cross(i,j);
+       i = cross(j,k);
+       orient = set(i,j,k);
+
+       @P += (v@sdf_grad * @sdf_samp * 1.1);
+    }
+}
+*/
+
+if (i@DELAY <= 1)
+{
+    i@DELAY = length;
+    if (random(seed4) < c_branch) {
+        if (branch_type == 0){
+            branch(orient, "left", angle, v@J, @P, length, @ptnum, constraint_type, step_length);
+        } else if (branch_type == 1) {
+            branch3(orient, "left", angle, v@J, v@K, @P, length, @ptnum, constraint_type, step_length);
+        }
+    }
+    if (random(seed5) < c_branch) {
+        if (branch_type == 0) {
+            branch(orient, "right", angle, v@J, @P, length, @ptnum, constraint_type, step_length);
+        } else if (branch_type == 1) {
+            branch3(orient, "right", angle, v@J, v@K, @P, length, @ptnum, constraint_type, step_length);
+        }
+    }
+}
+
+drop_point(orient, @P, i@DELAY-1, @ptnum, constraint_type, step_length);
+3@transform = orient;

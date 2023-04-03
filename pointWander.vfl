@@ -1,0 +1,57 @@
+float seed = ch("Seed");
+
+matrix3 axis = qconvert(p@orient);
+
+vector fwd = set(axis.zx, axis.zy, axis.zz);
+vector up = set(axis.yx, axis.yy, axis.yz);
+vector side = cross(fwd, up);
+
+// set wandering vector
+// down vector & wander source vector
+matrix3 l_down = lookat(@P, -fwd*2, up);
+matrix3 l_deviation = lookat(fwd, v@deviation, up);
+// conv to quat
+vector4 ql_down = quaternion(l_down);
+vector4 ql_deviation = quaternion(l_deviation);
+// create lerp value
+float r = noise(@P + fwd);
+r = chramp("Turning", r);
+// lerp the down vs the wander
+vector4 q_rot = slerp(ql_down, ql_deviation, 1);
+
+// set the new forward vector
+matrix3 rot = qconvert(q_rot);
+fwd = set(rot.zx, rot.zy, rot.zz);
+v@fwd = fwd;
+
+// speed ramp
+f@tilt = dot(fwd, {0,-1,0});
+
+// underside drips
+/*
+float under = dot(up, {0,1,0});
+under = fit(under, 0, -1, 0, 1);
+under = chramp("UndersideFalloff", under);
+
+f@test = under;
+
+if (under > 0.5) {
+    float dripchance = random(@ptnum+seed);
+    if (dripchance > 0.9) {
+        setpointgroup(0, "mover", @ptnum, 0, "set");
+        setpointgroup(0, "drip", @ptnum, 1, "set");
+        setpointattrib(0, "Cd", @ptnum, {1,0,0}, "set");
+        return;
+    }
+}
+
+
+vector pp = @P + set(0, @Frame/200, 0);
+float r2 = curlnoise(@P*0.5 + pp + seed).x;
+r2 = fit(r2, -1, 1, 0, 1);
+r2 = chramp("Speed", r2);
+
+@P -= fwd * -tilt * r2 * 0.05;
+v@fwd = fwd;
+*/
+
